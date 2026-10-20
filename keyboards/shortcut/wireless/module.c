@@ -6,6 +6,10 @@
 #include "smsg.h"
 #include "uart.h"
 
+#ifdef BRIDGE75_BATTERY_MONITOR
+#    include "battery_monitor.h"
+#endif
+
 #ifndef MD_BAUD_RATE
 #    define MD_BAUD_RATE 115200
 #endif
@@ -70,7 +74,11 @@ static uint8_t md_rev_payload[MD_SEND_PKT_PAYLOAD_MAX] = {0};
 static uint8_t md_raw_payload[MD_RAW_SIZE]             = {0};
 
 static md_info_t md_info = {
+#ifdef BRIDGE75_BATTERY_MONITOR
+    .bat       = BRIDGE_BATTERY_UNKNOWN_PERCENT,
+#else
     .bat       = 100,
+#endif
     .indicator = 0,
     .version   = 0,
     .state     = MD_STATE_NONE,
@@ -210,7 +218,14 @@ static void md_receive_msg_task(void) {
                     }
                 } break;
                 case MD_REV_CMD_BATVOL: {
+#ifdef BRIDGE75_BATTERY_MONITOR
+                    // Only checksum-verified, in-range packets establish freshness.
+                    if (bridge_battery_receive(&bridge_battery, md_rev_payload[1], timer_read32())) {
+                        md_info.bat = md_rev_payload[1];
+                    }
+#else
                     md_info.bat = md_rev_payload[1];
+#endif
                 } break;
                 case MD_REV_CMD_MD_FW_VERSION: {
                     md_info.version = md_rev_payload[1];

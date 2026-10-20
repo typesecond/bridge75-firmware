@@ -266,7 +266,12 @@ void wireless_task(void) {
      */
     if (get_transport() == TRANSPORT_USB) {
         usb_remote_wakeup();
-    } else if (lpwr_get_state() == LPWR_NORMAL) {
+    }
+#ifndef BRIDGE75_BATTERY_MONITOR
+    else
+#endif
+    // Bridge75 also needs real readings while plugged in / charging.
+    if (lpwr_get_state() == LPWR_NORMAL) {
         static uint32_t inqtimer = 0x00;
 
         if (sync_timer_elapsed32(inqtimer) >= (WLS_INQUIRY_BAT_TIME)) {

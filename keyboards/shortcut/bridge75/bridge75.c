@@ -16,6 +16,10 @@
 
 #ifdef WIRELESS_ENABLE
 #include "wireless.h"
+#include "battery_monitor.h"
+#ifdef VIA_ENABLE
+#    include "raw_hid.h"
+#endif
 
 typedef union {
     uint32_t raw;
@@ -115,11 +119,13 @@ void usb_power_disconnect(void) {
 }
 
 void suspend_power_down_kb(void) {
+    bridge_battery_invalidate(&bridge_battery);
     gpio_write_pin_high(LED_POWER_EN_PIN);
     suspend_power_down_user();
 }
 
 void suspend_wakeup_init_kb(void) {
+    bridge_battery_invalidate(&bridge_battery);
     // Re-enable LED power with brief stabilization delay
     // USB suspend doesn't discharge capacitors fully, so shorter delay is fine
     gpio_write_pin_low(LED_POWER_EN_PIN);
@@ -177,6 +183,24 @@ void wireless_housekeeping_task_kb(void) {
 }
 
 void wireless_post_task(void) {
+    // Changing the power source or connection invalidates the last reading.
+    // A new battery UART packet, rather than reading the cached byte again,
+    // is required to make the indication fresh.
+    static bool last_cable;
+    static bool last_charging;
+    static uint8_t last_device;
+    static uint8_t last_state;
+    bool cable = gpio_read_pin(BT_CABLE_PIN);
+    bool charging = cable && !gpio_read_pin(BT_CHARGE_PIN);
+    uint8_t device = wireless_get_current_devs();
+    uint8_t state = *md_getp_state();
+    if (cable != last_cable || charging != last_charging || device != last_device || state != last_state) {
+        bridge_battery_invalidate(&bridge_battery);
+        last_cable = cable;
+        last_charging = charging;
+        last_device = device;
+        last_state = state;
+    }
     if (post_init_timer && timer_elapsed32(post_init_timer) >= 100) {
         md_send_devctrl(MD_SND_CMD_DEVCTRL_FW_VERSION);   // get the module fw version.
         md_send_devctrl(MD_SND_CMD_DEVCTRL_SLEEP_BT_EN);  // timeout 30min to sleep in bt mode, enable
@@ -370,23 +394,35 @@ bool rgb_matrix_indicators_advanced_kb(uint8_t led_min, uint8_t led_max) {
             // Check if we are plugged in and charging
             rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_WHITE);
         } else {
-            uint8_t bat_level = *md_getp_bat();
-            if (bat_level > 90) {
+            bridge_battery_state_t state = bridge_battery_state(&bridge_battery, timer_read32());
+            if (state != BRIDGE_BATTERY_FRESH) {
+                // Purple means awaiting telemetry; never pretend to be full.
+                rgb_matrix_set_color(ESCAPE_INDEX, 0x50, 0x00, 0x50);
+            } else if (bridge_battery.band == BRIDGE_BATTERY_GREEN) {
                 rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_GREEN);
-            } else if (bat_level > 50) {
+            } else if (bridge_battery.band == BRIDGE_BATTERY_BLUE) {
                 rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_BLUE);
-            } else if (bat_level > 10) {
+            } else if (bridge_battery.band == BRIDGE_BATTERY_YELLOW) {
                 rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_YELLOW);
-            } else if (bat_level > 0) {
-                rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_RED);
             } else {
-                // Only show battery if its actually been set
-                rgb_matrix_set_color(ESCAPE_INDEX, RGB_OFF);
+                // Includes a real 0% reading.
+                rgb_matrix_set_color(ESCAPE_INDEX, RGB_ADJ_RED);
             }
         }
 
         // Show active connection
         connection_indicators();
+
+        // F1-F12 form a continuous battery gauge only while Fn is held.
+        // Resolve matrix positions rather than assuming physical LED order.
+        for (uint8_t segment = 0; segment < BRIDGE_BATTERY_GAUGE_KEYS; segment++) {
+            uint8_t index = g_led_config.matrix_co[0][segment + 1];
+            if (index != NO_LED && index >= led_min && index < led_max) {
+                uint8_t rgb[3];
+                bridge_battery_gauge(&bridge_battery, timer_read32(), segment, rgb);
+                rgb_matrix_set_color(index, rgb[0], rgb[1], rgb[2]);
+            }
+        }
     } else if (confinfo.devs != DEVS_USB && *md_getp_state() != MD_STATE_CONNECTED) {
         // Always show wireless connection indicators when not connected
         connection_indicators();
@@ -394,6 +430,18 @@ bool rgb_matrix_indicators_advanced_kb(uint8_t led_min, uint8_t led_max) {
 
     return true;
 }
+
+#ifdef VIA_ENABLE
+bool via_command_kb(uint8_t *data, uint8_t length) {
+    bool cable = gpio_read_pin(BT_CABLE_PIN);
+    uint8_t power_flags = cable | ((cable && !gpio_read_pin(BT_CHARGE_PIN)) << 1);
+    if (!bridge_battery_packet(&bridge_battery, timer_read32(), power_flags, wireless_get_current_devs(), data, length)) return false;
+    // This fork redirects raw_hid_send using line-number macros. Use its
+    // transport-aware implementation directly for this additional call site.
+    replaced_hid_send(data, length);
+    return true;
+}
+#endif
 
 // Exprimental change to fix duplicate and hung key presses on wireless
 void wireless_send_nkro(report_nkro_t *report) {

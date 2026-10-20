@@ -4,6 +4,9 @@
 
 #pragma once
 
+// Battery telemetry is received from the wireless MCU, not measured here.
+#define BRIDGE75_BATTERY_MONITOR
+
 /* COLORS adjusted for RGB_MATRIX_MAXIMUM_BRIGHTNESS of 104 */
 #define RGB_ADJ_BLUE    0x00, 0x00, 0xC8
 #define RGB_ADJ_GREEN   0x00, 0xC8, 0x00
