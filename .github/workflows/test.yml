@@ -1,0 +1,14 @@
+name: Battery firmware tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  native-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test UART parser and Fn lighting
+        run: sh battery-project/test.sh
+      - name: Verify candidate binary
+        working-directory: firmware
+        run: sha256sum -c SHA256SUMS
