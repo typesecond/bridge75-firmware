@@ -1,0 +1,8 @@
+{
+  "base_commit": "1153ac2b39e937a2c2f6bd1e956643518a2117e3",
+  "target": "shortcut/bridge75/ansi:battery",
+  "hardware_validated": false,
+  "binary": "bridge75-ansi-fn-battery.bin",
+  "bytes": 49996,
+  "sha256": "3f329154125551727d02fd7aac72b52df0179b51ad207e8a3d3ad68244746c52"
+}
